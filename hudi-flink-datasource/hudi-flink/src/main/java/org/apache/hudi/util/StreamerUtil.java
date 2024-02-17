@@ -33,6 +33,7 @@ import org.apache.hudi.common.table.log.HoodieLogFormat;
 import org.apache.hudi.common.table.timeline.HoodieActiveTimeline;
 import org.apache.hudi.common.table.timeline.HoodieInstant;
 import org.apache.hudi.common.table.timeline.HoodieTimeline;
+import org.apache.hudi.common.util.ClusteringUtils;
 import org.apache.hudi.common.util.Option;
 import org.apache.hudi.common.util.ReflectionUtils;
 import org.apache.hudi.common.util.StringUtils;
@@ -46,6 +47,7 @@ import org.apache.hudi.configuration.OptionsResolver;
 import org.apache.hudi.exception.HoodieException;
 import org.apache.hudi.exception.HoodieIOException;
 import org.apache.hudi.exception.HoodieValidationException;
+import org.apache.hudi.hadoop.fs.HadoopFSUtils;
 import org.apache.hudi.keygen.SimpleAvroKeyGenerator;
 import org.apache.hudi.schema.FilebasedSchemaProvider;
 import org.apache.hudi.sink.transform.ChainedTransformer;
@@ -278,7 +280,7 @@ public class StreamerUtil {
    */
   public static boolean tableExists(String basePath, org.apache.hadoop.conf.Configuration hadoopConf) {
     // Hadoop FileSystem
-    FileSystem fs = FSUtils.getFs(basePath, hadoopConf);
+    FileSystem fs = HadoopFSUtils.getFs(basePath, hadoopConf);
     try {
       return fs.exists(new Path(basePath, HoodieTableMetaClient.METAFOLDER_NAME))
           && fs.exists(new Path(new Path(basePath, HoodieTableMetaClient.METAFOLDER_NAME), HoodieTableConfig.HOODIE_PROPERTIES_FILE));
@@ -296,7 +298,7 @@ public class StreamerUtil {
    */
   public static boolean partitionExists(String tablePath, String partitionPath, org.apache.hadoop.conf.Configuration hadoopConf) {
     // Hadoop FileSystem
-    FileSystem fs = FSUtils.getFs(tablePath, hadoopConf);
+    FileSystem fs = HadoopFSUtils.getFs(tablePath, hadoopConf);
     try {
       return fs.exists(new Path(tablePath, partitionPath));
     } catch (IOException e) {
@@ -362,7 +364,7 @@ public class StreamerUtil {
    * Returns the table config or empty if the table does not exist.
    */
   public static Option<HoodieTableConfig> getTableConfig(String basePath, org.apache.hadoop.conf.Configuration hadoopConf) {
-    FileSystem fs = FSUtils.getFs(basePath, hadoopConf);
+    FileSystem fs = HadoopFSUtils.getFs(basePath, hadoopConf);
     Path metaPath = new Path(basePath, HoodieTableMetaClient.METAFOLDER_NAME);
     try {
       if (fs.exists(new Path(metaPath, HoodieTableConfig.HOODIE_PROPERTIES_FILE))) {
@@ -516,7 +518,7 @@ public class StreamerUtil {
   public static boolean isWriteCommit(HoodieTableType tableType, HoodieInstant instant, HoodieTimeline timeline) {
     return tableType == HoodieTableType.MERGE_ON_READ
         ? !instant.getAction().equals(HoodieTimeline.COMMIT_ACTION) // not a compaction
-        : !ClusteringUtil.isClusteringInstant(instant, timeline);   // not a clustering
+        : !ClusteringUtils.isClusteringInstant(instant, timeline);   // not a clustering
   }
 
   /**

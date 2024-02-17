@@ -210,6 +210,37 @@ object DataSourceReadOptions {
 
   val INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT: ConfigProperty[String] = HoodieCommonConfig.INCREMENTAL_READ_HANDLE_HOLLOW_COMMIT
 
+  val CREATE_TIMELINE_RELATION: ConfigProperty[String] =
+    ConfigProperty.key("hoodie.datasource.read.table.valued.function.timeline.relation")
+      .defaultValue("false")
+      .markAdvanced()
+      .sinceVersion("1.0.0")
+      .withDocumentation("When this is set, the relation created by DefaultSource is for a view representing" +
+        " the result set of the table valued function hudi_query_timeline(...)")
+
+  val TIMELINE_RELATION_ARG_ARCHIVED_TIMELINE:  ConfigProperty[String] =
+    ConfigProperty.key("hoodie.datasource.read.table.valued.function.timeline.relation.archived")
+      .defaultValue("false")
+      .markAdvanced()
+      .sinceVersion("1.0.0")
+      .withDocumentation("When this is set, the result set of the table valued function hudi_query_timeline(...)" +
+        " will include archived timeline")
+
+  val CREATE_FILESYSTEM_RELATION: ConfigProperty[String] = ConfigProperty
+    .key("hoodie.datasource.read.create.filesystem.relation")
+    .defaultValue("false")
+    .markAdvanced()
+    .sinceVersion("1.0.0")
+    .withDocumentation("When this is set, the relation created by DefaultSource is for a view representing" +
+      " the result set of the table valued function hudi_filesystem_view(...)")
+
+  val FILESYSTEM_RELATION_ARG_SUBPATH:  ConfigProperty[String] =
+    ConfigProperty.key("hoodie.datasource.read.table.valued.function.filesystem.relation.subpath")
+      .defaultValue("")
+      .markAdvanced()
+      .sinceVersion("1.0.0")
+      .withDocumentation("A regex under the table's base path to get file system view information")
+
   /** @deprecated Use {@link QUERY_TYPE} and its methods instead */
   @Deprecated
   val QUERY_TYPE_OPT_KEY = QUERY_TYPE.key()
@@ -469,7 +500,9 @@ object DataSourceWriteOptions {
     .defaultValue("false")
     .markAdvanced()
     .withDocumentation("If set to true, records from the incoming dataframe will not overwrite existing records with the same key during the write operation. " +
-      "This config is deprecated as of 0.14.0. Please use hoodie.datasource.insert.dup.policy instead.");
+      "<br /> **Note** Just for Insert operation in Spark SQL writing since 0.14.0, users can switch to the config `hoodie.datasource.insert.dup.policy` instead " +
+      "for a simplified duplicate handling experience. The new config will be incorporated into all other writing flows and this config will be fully deprecated " +
+      "in future releases.");
 
   val PARTITIONS_TO_DELETE: ConfigProperty[String] = ConfigProperty
     .key("hoodie.datasource.write.partitions.to.delete")
@@ -530,7 +563,7 @@ object DataSourceWriteOptions {
   @Deprecated
   val RECONCILE_SCHEMA: ConfigProperty[java.lang.Boolean] = HoodieCommonConfig.RECONCILE_SCHEMA
 
-  val HANDLE_MISSING_COLUMNS_WITH_LOSSLESS_TYPE_PROMOTIONS: ConfigProperty[String] = HoodieCommonConfig.HANDLE_MISSING_COLUMNS_WITH_LOSSLESS_TYPE_PROMOTIONS
+  val SET_NULL_FOR_MISSING_COLUMNS: ConfigProperty[String] = HoodieCommonConfig.SET_NULL_FOR_MISSING_COLUMNS
 
   val MAKE_NEW_COLUMNS_NULLABLE: ConfigProperty[java.lang.Boolean] = HoodieCommonConfig.MAKE_NEW_COLUMNS_NULLABLE
 
@@ -566,7 +599,7 @@ object DataSourceWriteOptions {
     .withValidValues(NONE_INSERT_DUP_POLICY, DROP_INSERT_DUP_POLICY, FAIL_INSERT_DUP_POLICY)
     .markAdvanced()
     .sinceVersion("0.14.0")
-    .withDocumentation("When operation type is set to \"insert\", users can optionally enforce a dedup policy. This policy will be employed "
+    .withDocumentation("**Note** This is only applicable to Spark SQL writing.<br />When operation type is set to \"insert\", users can optionally enforce a dedup policy. This policy will be employed "
       + " when records being ingested already exists in storage. Default policy is none and no action will be taken. Another option is to choose " +
       " \"drop\", on which matching records from incoming will be dropped and the rest will be ingested. Third option is \"fail\" which will " +
       "fail the write operation when same records are re-ingested. In other words, a given record as deduced by the key generation policy " +

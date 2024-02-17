@@ -472,6 +472,18 @@ public abstract class BaseHoodieTableServiceClient<I, T, O> extends BaseHoodieCl
     return clusteringMetadata;
   }
 
+  public boolean purgePendingClustering(String clusteringInstant) {
+    HoodieTable<?, I, ?, T> table = createTable(config, context.getHadoopConf().get());
+    HoodieTimeline pendingClusteringTimeline = table.getActiveTimeline().filterPendingReplaceTimeline();
+    HoodieInstant inflightInstant = HoodieTimeline.getReplaceCommitInflightInstant(clusteringInstant);
+    if (pendingClusteringTimeline.containsInstant(inflightInstant)) {
+      table.rollbackInflightClustering(inflightInstant, commitToRollback -> getPendingRollbackInfo(table.getMetaClient(), commitToRollback, false), true);
+      table.getMetaClient().reloadActiveTimeline();
+      return true;
+    }
+    return false;
+  }
+
   protected abstract void validateClusteringCommit(HoodieWriteMetadata<O> clusteringMetadata, String clusteringCommitTime, HoodieTable table);
 
   protected abstract HoodieWriteMetadata<O> convertToOutputMetadata(HoodieWriteMetadata<T> writeMetadata);
@@ -495,7 +507,7 @@ public abstract class BaseHoodieTableServiceClient<I, T, O> extends BaseHoodieCl
         preCommit(metadata);
       }
       // Update table's metadata (table)
-      writeTableMetadata(table, clusteringInstant.getTimestamp(), metadata, writeStatuses.orElse(context.emptyHoodieData()));
+      writeTableMetadata(table, clusteringInstant.getTimestamp(), metadata, writeStatuses.orElseGet(context::emptyHoodieData));
 
       LOG.info("Committing Clustering " + clusteringCommitTime + ". Finished with result " + metadata);
 
@@ -1016,7 +1028,7 @@ public abstract class BaseHoodieTableServiceClient<I, T, O> extends BaseHoodieCl
   @Deprecated
   public boolean rollback(final String commitInstantTime, Option<HoodiePendingRollbackInfo> pendingRollbackInfo, boolean skipLocking) throws HoodieRollbackException {
     final String rollbackInstantTime = pendingRollbackInfo.map(entry -> entry.getRollbackInstant().getTimestamp())
-        .orElse(createNewInstantTime(!skipLocking));
+        .orElseGet(() -> createNewInstantTime(!skipLocking));
     return rollback(commitInstantTime, pendingRollbackInfo, rollbackInstantTime, skipLocking);
   }
 

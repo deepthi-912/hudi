@@ -18,6 +18,7 @@
 package org.apache.spark.sql.hudi
 
 import org.apache.hudi.DataSourceWriteOptions._
+import org.apache.hudi.client.common.HoodieSparkEngineContext
 import org.apache.hudi.common.model.HoodieRecord.HoodieRecordType
 import org.apache.hudi.common.model.{HoodieRecord, WriteOperationType}
 import org.apache.hudi.common.table.timeline.HoodieInstant
@@ -28,12 +29,14 @@ import org.apache.hudi.exception.{HoodieDuplicateKeyException, HoodieException}
 import org.apache.hudi.execution.bulkinsert.BulkInsertSortMode
 import org.apache.hudi.index.HoodieIndex.IndexType
 import org.apache.hudi.{DataSourceWriteOptions, HoodieCLIUtils, HoodieSparkUtils}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerStageSubmitted}
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.hudi.HoodieSparkSqlTestBase.getLastCommitMetadata
 import org.apache.spark.sql.hudi.command.HoodieSparkValidateDuplicateKeyRecordMerger
 import org.junit.jupiter.api.Assertions.assertEquals
 
 import java.io.File
+import java.util.concurrent.CountDownLatch
 
 class TestInsertTable extends HoodieSparkSqlTestBase {
 
@@ -2081,10 +2084,27 @@ class TestInsertTable extends HoodieSparkSqlTestBase {
     })
   }
 
+  var listenerCallCount: Int = 0
+  var countDownLatch: CountDownLatch = _
+
+  // add a listener for stages for parallelism checking with stage name
+  class StageParallelismListener(var stageName: String) extends SparkListener {
+    override def onStageSubmitted(stageSubmitted: SparkListenerStageSubmitted): Unit = {
+      if (stageSubmitted.stageInfo.name.contains(stageName)) {
+        assertResult(1)(stageSubmitted.stageInfo.numTasks)
+        listenerCallCount = listenerCallCount + 1
+        countDownLatch.countDown
+      }
+    }
+
+  }
+
   test("Test multiple partition fields pruning") {
 
     withRecordType()(withTempDir { tmp =>
       val targetTable = generateTableName
+      countDownLatch = new CountDownLatch(1)
+      listenerCallCount = 0
       spark.sql(
         s"""
            |create table ${targetTable} (
@@ -2114,6 +2134,8 @@ class TestInsertTable extends HoodieSparkSqlTestBase {
            |union
            |select '1' as id, 'aa' as name, 123 as dt, '2023-10-12' as `day`, 12 as `hour`
            |""".stripMargin)
+      val stageClassName = classOf[HoodieSparkEngineContext].getSimpleName
+      spark.sparkContext.addSparkListener(new StageParallelismListener(stageName = stageClassName))
       val df = spark.sql(
         s"""
            |select * from ${targetTable} where day='2023-10-12' and hour=11
@@ -2124,12 +2146,16 @@ class TestInsertTable extends HoodieSparkSqlTestBase {
         rddHead = rddHead.firstParent
       }
       assertResult(1)(rddHead.partitions.size)
+      countDownLatch.await
+      assert(listenerCallCount >= 1)
     })
   }
 
   test("Test single partiton field pruning") {
 
     withRecordType()(withTempDir { tmp =>
+      countDownLatch = new CountDownLatch(1)
+      listenerCallCount = 0
       val targetTable = generateTableName
       spark.sql(
         s"""
@@ -2160,6 +2186,8 @@ class TestInsertTable extends HoodieSparkSqlTestBase {
            |union
            |select '1' as id, 'aa' as name, 123 as dt, '2023-10-12' as `day`, 12 as `hour`
            |""".stripMargin)
+      val stageClassName = classOf[HoodieSparkEngineContext].getSimpleName
+      spark.sparkContext.addSparkListener(new StageParallelismListener(stageName = stageClassName))
       val df = spark.sql(
         s"""
            |select * from ${targetTable} where day='2023-10-12' and hour=11
@@ -2170,6 +2198,40 @@ class TestInsertTable extends HoodieSparkSqlTestBase {
         rddHead = rddHead.firstParent
       }
       assertResult(1)(rddHead.partitions.size)
+      countDownLatch.await
+      assert(listenerCallCount >= 1)
+    })
+  }
+
+  test("Test inaccurate index type") {
+    withRecordType()(withTempDir { tmp =>
+      val targetTable = generateTableName
+
+      assertThrows[IllegalArgumentException] {
+        try {
+          spark.sql(
+            s"""
+               |create table ${targetTable} (
+               |  `id` string,
+               |  `name` string,
+               |  `dt` bigint,
+               |  `day` STRING,
+               |  `hour` INT
+               |) using hudi
+               |OPTIONS ('hoodie.datasource.write.hive_style_partitioning' 'false', 'hoodie.datasource.meta.sync.enable' 'false', 'hoodie.datasource.hive_sync.enable' 'false')
+               |tblproperties (
+               |  'primaryKey' = 'id',
+               |  'type' = 'mor',
+               |  'preCombineField'='dt',
+               |  'hoodie.index.type' = 'BUCKET_aa',
+               |  'hoodie.bucket.index.hash.field' = 'id',
+               |  'hoodie.bucket.index.num.buckets'=512
+               | )
+               |partitioned by (`day`,`hour`)
+               |location '${tmp.getCanonicalPath}'
+               |""".stripMargin)
+        }
+      }
     })
   }
 
@@ -2333,6 +2395,43 @@ class TestInsertTable extends HoodieSparkSqlTestBase {
       }
     })
   }
+
+  test("Test various data types as partition fields") {
+    withRecordType()(withTempDir { tmp =>
+      val tableName = generateTableName
+      spark.sql(
+        s"""
+           |CREATE TABLE $tableName (
+           |  id INT,
+           |  boolean_field BOOLEAN,
+           |  float_field FLOAT,
+           |  byte_field BYTE,
+           |  short_field SHORT,
+           |  decimal_field DECIMAL(10, 5),
+           |  date_field DATE,
+           |  string_field STRING,
+           |  timestamp_field TIMESTAMP
+           |) USING hudi
+           | TBLPROPERTIES (primaryKey = 'id')
+           | PARTITIONED BY (boolean_field, float_field, byte_field, short_field, decimal_field, date_field, string_field, timestamp_field)
+           |LOCATION '${tmp.getCanonicalPath}'
+     """.stripMargin)
+
+      // Insert data into partitioned table
+      spark.sql(
+        s"""
+           |INSERT INTO $tableName VALUES
+           |(1, TRUE, CAST(1.0 as FLOAT), 1, 1, 1234.56789, DATE '2021-01-05', 'partition1', TIMESTAMP '2021-01-05 10:00:00'),
+           |(2, FALSE,CAST(2.0 as FLOAT), 2, 2, 6789.12345, DATE '2021-01-06', 'partition2', TIMESTAMP '2021-01-06 11:00:00')
+     """.stripMargin)
+
+      checkAnswer(s"SELECT id, boolean_field FROM $tableName ORDER BY id")(
+        Seq(1, true),
+        Seq(2, false)
+      )
+    })
+  }
+
 
   def ingestAndValidateDataDupPolicy(tableType: String, tableName: String, tmp: File,
                                      expectedOperationtype: WriteOperationType = WriteOperationType.INSERT,
